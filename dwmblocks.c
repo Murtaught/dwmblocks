@@ -1,9 +1,10 @@
-#include<stdlib.h>
-#include<stdio.h>
-#include<string.h>
-#include<unistd.h>
-#include<signal.h>
-#include<X11/Xlib.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <X11/Xlib.h>
 #define LENGTH(X)               (sizeof(X) / sizeof (X[0]))
 #define CMDLENGTH		50
 
@@ -13,6 +14,7 @@ typedef struct {
 	unsigned int interval;
 	unsigned int signal;
 } Block;
+
 void sighandler(int num);
 void buttonhandler(int sig, siginfo_t *si, void *ucontext);
 void replace(char *str, char old, char new);
@@ -21,13 +23,11 @@ void getcmds(int time);
 #ifndef __OpenBSD__
 void getsigcmds(int signal);
 void setupsignals();
-void sighandler(int signum);
 #endif
 int getstatus(char *str, char *last);
 void setroot();
 void statusloop();
 void termhandler(int signum);
-
 
 #include "config.h"
 
@@ -39,9 +39,8 @@ static char statusstr[2][256];
 static int statusContinue = 1;
 static void (*writestatus) () = setroot;
 
-void replace(char *str, char old, char new)
-{
-	int N = strlen(str);
+void replace(char *str, char old, char new) {
+	const int N = strlen(str);
 	for(int i = 0; i < N; i++)
 		if(str[i] == old)
 			str[i] = new;
@@ -61,28 +60,52 @@ void remove_all(char *str, char to_remove) {
 }
 
 //opens process *cmd and stores output in *output
-void getcmd(const Block *block, char *output)
-{
-	if (block->signal)
-	{
+void getcmd(const Block *block, char *output) {
+	// NOTE: `output` is always `statusbar[i]` for `block`.
+	// NOTE: `output` length is exatrly CMDLENGTH bytes.
+	int output_size = CMDLENGTH;
+
+	if (block->signal) {
 		output[0] = block->signal;
 		output++;
+		output_size--;
+	}
+
+	const int icon_length = strlen(block->icon);
+	if (output_size <= icon_length) {
+		return;
 	}
 	strcpy(output, block->icon);
-	char *cmd = block->command;
-	FILE *cmdf = popen(cmd,"r");
-	if (!cmdf)
+	output += icon_length;
+	output_size -= icon_length;
+
+	const char *const cmd = block->command;
+	FILE *const cmdf = popen(cmd, "r");
+	if (!cmdf) {
 		return;
-	char c;
-	int i = strlen(block->icon);
-	fgets(output+i, CMDLENGTH-(strlen(delim)+1), cmdf);
-	remove_all(output, '\n');
-	i = strlen(output);
-    if ((i > 0 && block != &blocks[LENGTH(blocks) - 1]))
-        strcat(output, delim);
-    i+=strlen(delim);
-	output[i++] = '\0';
+	}
+
+	fgets(output, output_size - (strlen(delim) + 1), cmdf);
 	pclose(cmdf);
+
+	// We assume that icon did not contain any '\n`s.
+	remove_all(output, '\n');
+
+	const int command_output_length = strlen(output);
+	output_size -= command_output_length;
+	output += command_output_length;
+
+	const bool is_last_block = block == &blocks[LENGTH(blocks) - 1];
+	if (!is_last_block) {
+		strncat(output, delim, output_size);
+		output_size -= strlen(delim);
+		output += strlen(delim);
+	}
+
+	while (output_size > 0) {
+		*(output++) = '\0';
+		output_size--;
+	}
 }
 
 void getcmds(int time)
@@ -99,12 +122,13 @@ void getcmds(int time)
 #ifndef __OpenBSD__
 void getsigcmds(int signal)
 {
+	// NOTE: `signal` is relative to SIGRTMIN.
 	const Block *current;
 	for (int i = 0; i < LENGTH(blocks); i++)
 	{
 		current = blocks + i;
 		if (current->signal == signal)
-			getcmd(current,statusbar[i]);
+			getcmd(current, statusbar[i]);
 	}
 }
 
@@ -140,11 +164,15 @@ int getstatus(char *str, char *last)
 	strcpy(last, str);
 	str[0] = '\0';
     for(int i = 0; i < LENGTH(blocks); i++) {
-		strcat(str, statusbar[i]);
-        if (i == LENGTH(blocks) - 1)
-            strcat(str, " ");
+		const Block *const block = &blocks[i];
+		const char *block_bar = statusbar[i];
+		if (block->signal) {
+			// First byte is signal number.
+			block_bar++;
+		}
+
+		strcat(str, block_bar);
     }
-	str[strlen(str)-1] = '\0';
 	return strcmp(str, last);//0 if they are the same
 }
 
